@@ -35,8 +35,11 @@ pip install -e lmms-eval/
 # Install hf_xet
 pip install huggingface_hub[hf_xet]
 
+# Install torch 2.8.0
+pip3 install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/test/cu126
+
 # Install xformers
-pip install -U xformers --index-url https://download.pytorch.org/whl/cu126 --no-deps --force-reinstall
+pip install -U xformers --index-url https://download.pytorch.org/whl/test/cu126 --no-deps --force-reinstall
 
 # To help dumping traces when timeout occurred
 pip install py-spy
