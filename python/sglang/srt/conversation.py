@@ -961,6 +961,20 @@ register_conv_template(
     )
 )
 
+register_conv_template(
+    Conversation(
+        name="dots-vlm",
+        system_message="You are a helpful assistant.",
+        system_template="<|system|>{system_message}<|endofsystem|>\n",
+        roles=("<|user|>", "<|assistant|>"),
+        sep="<|endofuser|>",
+        sep2="<|endofassistant|>",
+        stop_str=["<|endoftext|>", "<|endofassistant|>"],
+        sep_style=SeparatorStyle.NO_COLON_TWO,
+        image_token="<|img|><|imgpad|><|endofimg|>",
+    )
+)
+
 
 @register_conv_template_matching_function
 def match_internvl(model_path: str):
