@@ -35,9 +35,6 @@ pip install -e lmms-eval/
 # Install hf_xet
 pip install huggingface_hub[hf_xet]
 
-# Install xformers
-pip install -U xformers --index-url https://download.pytorch.org/whl/test/cu126 --no-deps --force-reinstall
-
 # To help dumping traces when timeout occurred
 pip install py-spy
 
