@@ -17,7 +17,7 @@ rm -rf /usr/local/lib/python3.10/dist-packages/flashinfer*
 rm -rf /usr/local/lib/python3.10/dist-packages/sgl_kernel*
 
 # Install the main package
-pip install -e "python[dev]"
+pip install -e "python[dev]" --extra-index-url https://download.pytorch.org/whl/test/cu126
 
 # Show current packages
 pip list
@@ -34,9 +34,6 @@ pip install -e lmms-eval/
 
 # Install hf_xet
 pip install huggingface_hub[hf_xet]
-
-# Install torch 2.8.0
-pip3 install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/test/cu126
 
 # Install xformers
 pip install -U xformers --index-url https://download.pytorch.org/whl/test/cu126 --no-deps --force-reinstall
