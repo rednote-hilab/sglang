@@ -1,30 +1,19 @@
-from typing import Iterable, List, Tuple, Union, Optional
+from typing import Iterable, List, Tuple, Optional
 
 import torch
 from torch import nn
-from sglang.srt.configs import model_config
-from sglang.srt.conversation import (
-    Conversation,
-    SeparatorStyle,
-    register_conv_template,
-    register_conv_template_matching_function,
-)
+
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.managers.mm_utils import (
     MultiModalityDataPaddingPatternMultimodalTokens,
     general_mm_embed_routine,
 )
-
 from sglang.srt.managers.schedule_batch import MultimodalDataItem, MultimodalInputs
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.models.deepseek_v2 import DeepseekV2ForCausalLM
-from sglang.srt.model_loader.weight_utils import default_weight_loader
 
 from .dots_vlm_vit import DotsVisionTransformer
 from sglang.srt.configs.dots_vlm import DotsVLMConfig
-
-
-
 
 
 
@@ -37,10 +26,8 @@ class DotsVLMForCausalLM(nn.Module):
         self.image_token_id = config.im_span_id
         self.video_token_id = config.video_span_id
 
-        # ----------- language model ------------
         self.language_model = DeepseekV2ForCausalLM(config.language_config, quant_config)
-        
-        
+    
         # Initialize vision tower (matching transformers naming for weight compatibility)
         self.vision_tower = DotsVisionTransformer(config.vision_config)
 
@@ -104,7 +91,6 @@ class DotsVLMForCausalLM(nn.Module):
         # Force bfloat16 to match model's expected dtype
         if image_embeds.dtype != torch.bfloat16 and hasattr(self.language_model.model, 'embed_tokens'):
             target_dtype = self.language_model.model.embed_tokens.weight.dtype
-            print(f"🔄 Converting image embeddings from {image_embeds.dtype} to {target_dtype} for FlashInfer compatibility")
             image_embeds = image_embeds.to(target_dtype)
         
         return image_embeds
@@ -116,12 +102,6 @@ class DotsVLMForCausalLM(nn.Module):
         forward_batch: ForwardBatch,
         **kwargs: object,
     ) -> torch.Tensor:
-        """Forward pass for DotsVLM"""
-        # Use general multimodal embedding routine from sglang
-        # DotsVLM 应该能够使用原生的 MLA 权重结构，无需特殊处理
-        # assert not torch.any(torch.isnan(input_ids)), "input_ids contains NaN"
-        # assert not torch.any(torch.isnan(positions)), "positions contains NaN"
-        
         hidden_states = general_mm_embed_routine(
             input_ids=input_ids,
             positions=positions,
@@ -129,8 +109,6 @@ class DotsVLMForCausalLM(nn.Module):
             image_data_embedding_func=self.get_image_feature,
             language_model=self.language_model,
         )
-        # assert not torch.any(torch.isnan(hidden_states.next_token_logits)), "hidden_states contains NaN"
-        
         return hidden_states
 
 

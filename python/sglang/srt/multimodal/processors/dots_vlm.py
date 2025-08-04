@@ -1,28 +1,8 @@
-# Copyright (c) 2023-2024 DeepSeek.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of
-# this software and associated documentation files (the "Software"), to deal in
-# the Software without restriction, including without limitation the rights to
-# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-# the Software, and to permit persons to whom the Software is furnished to do so,
-# subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 from typing import List, Union, Dict
 import re
 import math
 import asyncio
 from PIL import Image
-from sglang.srt.managers.schedule_batch import Modality, MultimodalDataItem
 from sglang.srt.models.dots_vlm import DotsVLMForCausalLM
 from sglang.srt.multimodal.processors.base_processor import (
     BaseMultimodalProcessor,
@@ -39,7 +19,6 @@ class DotsVLMImageProcessor(BaseMultimodalProcessor):
         # The regex that matches expanded image tokens.
         self.IMAGE_TOKEN_REGEX = re.compile(r"<\|img\|>(?:<\|imgpad\|>)+<\|endofimg\|>")
 
-        print(f"type of processor: {type(_processor)}")
         assert len(_processor.tokenizer.encode("<|img|>"))==1
         self.im_start_id = _processor.tokenizer.encode("<|img|>")[0]
         self.im_end_id = _processor.tokenizer.encode("<|endofimg|>")[0]
@@ -52,7 +31,6 @@ class DotsVLMImageProcessor(BaseMultimodalProcessor):
         vision_config = hf_config.vision_config
         patch_size = vision_config.patch_size
         merge_size = vision_config.spatial_merge_size
-        temporal_patch_size = vision_config.temporal_patch_size
 
         self.IMAGE_FACTOR = patch_size * merge_size
         self.MIN_PIXELS = _processor.image_processor.min_pixels
@@ -155,7 +133,6 @@ class DotsVLMImageProcessor(BaseMultimodalProcessor):
         combined_mm_item, input_ids = self.process_and_combine_mm_data(base_output)
 
         if combined_mm_item is None:
-            # Note(Xinyuan): This is the case where image loading fails.
             return None
 
         return {
