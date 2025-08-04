@@ -12,6 +12,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ENV PATH="${PATH}:/usr/local/nvidia/bin" \
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
 
+RUN apt update && apt install software-properties-common -y && \
+ && add-apt-repository ppa:deadsnakes/ppa -y \
+ && apt install python3.13-full -y \
+ && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
+ && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 2 \
+ && update-alternatives --set python3 /usr/bin/python3.13
+
 # Set timezone and install all packages
 RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
  && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
@@ -19,7 +26,6 @@ RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
     tzdata \
     software-properties-common netcat-openbsd kmod unzip openssh-server \
     curl wget lsof zsh ccache tmux htop git-lfs tree \
-    python3 python3-pip python3-dev libpython3-dev python3-venv \
     build-essential cmake \
     libopenmpi-dev libnuma1 libnuma-dev \
     libibverbs-dev libibverbs1 libibumad3 \
@@ -35,7 +41,7 @@ RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
     patchelf \
     nvidia-dkms-550 \
     devscripts debhelper fakeroot dkms check libsubunit0 libsubunit-dev \
- && ln -sf /usr/bin/python3 /usr/bin/python \
+ && ln -sf /usr/bin/python3.13 /usr/bin/python \
  && rm -rf /var/lib/apt/lists/* \
  && apt-get clean
 
@@ -58,6 +64,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel html5li
  && case "$CUDA_VERSION" in \
       12.6.1) CUINDEX=126 ;; \
       12.8.1) CUINDEX=128 ;; \
+      12.9.1) CUINDEX=129 ;; \
       *) echo "Unsupported CUDA version: $CUDA_VERSION" && exit 1 ;; \
     esac \
  && python3 -m pip install --no-cache-dir -e "python[${BUILD_TYPE}]" --extra-index-url https://download.pytorch.org/whl/cu${CUINDEX} \
