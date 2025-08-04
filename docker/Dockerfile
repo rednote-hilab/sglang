@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ENV PATH="${PATH}:/usr/local/nvidia/bin" \
     LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
 
-RUN apt update && apt install software-properties-common -y && \
+RUN apt update && apt install software-properties-common -y \
  && add-apt-repository ppa:deadsnakes/ppa -y \
  && apt install python3.13-full -y \
  && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
