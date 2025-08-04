@@ -217,6 +217,7 @@ class TpModelWorker:
         skip_sample: bool = False,
         skip_attn_backend_init=False,
     ) -> ForwardBatchOutput:
+        print(f"tp_worker.forward_batch_generation")
         if isinstance(model_worker_batch, ModelWorkerBatch):
             forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
         else:

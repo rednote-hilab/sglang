@@ -207,6 +207,7 @@ class EAGLEWorker(TpModelWorker):
     def draft_model_runner(self):
         return self.model_runner
 
+    # for overlap with spec dec v2, scheduler comes here. This runs in forward_stream.
     def forward_batch_generation(self, batch: ModelWorkerBatch) -> ForwardBatchOutput:
         """
         Run one speculative decoding forward batch.
@@ -216,6 +217,7 @@ class EAGLEWorker(TpModelWorker):
         Returns:
             batch_output: The results in a tuple
         """
+        print(f"EAGLEWorker.forward_batch_generation")
         if batch.forward_mode.is_decode():
             old_spec_info = batch.spec_info
             spec_info = self.draft(batch)
@@ -224,11 +226,11 @@ class EAGLEWorker(TpModelWorker):
         else:
             # Target prefill
             batch.capture_hidden_mode = CaptureHiddenMode.FULL
-            batch_output = self.target_worker.forward_batch_generation(batch)
+            batch_output = self.target_worker.forward_batch_generation(batch) # forward + sample
 
             # Draft prefill
             batch.capture_hidden_mode = CaptureHiddenMode.LAST
-            batch_output.spec_info = self.forward_draft_extend(
+            batch_output.spec_info = self.forward_draft_extend( # forward + topk for next decode
                 batch,
                 batch_output.logits_output.hidden_states,
                 batch_output.next_token_ids,
@@ -238,7 +240,7 @@ class EAGLEWorker(TpModelWorker):
     def draft(self, batch: ModelWorkerBatch):
         # Prepare for draft
         spec_info = batch.spec_info
-        forward_batch, can_cuda_graph = spec_info.prepare_for_draft(
+        forward_batch, can_cuda_graph = spec_info.prepare_for_draft( # TODO (ask lianmin): why is this in forward_stream? not in plan_stream?
             batch,
             self.cuda_graph_runner,
             self.draft_model_runner,
@@ -252,8 +254,8 @@ class EAGLEWorker(TpModelWorker):
                 forward_batch,
             )
         else:
-            self.draft_attn_backend.init_forward_metadata(forward_batch)
-            parent_list, top_scores_index, draft_tokens = self.draft_forward(
+            self.draft_attn_backend.init_forward_metadata(forward_batch) # this runs in forward_stream, why is it overlapped?
+            parent_list, top_scores_index, draft_tokens = self.draft_forward( # actual draft forward runs in forward_stream
                 forward_batch
             )
 
@@ -385,6 +387,7 @@ class EAGLEWorker(TpModelWorker):
         # Batch 1: Target verify
         # Prepare for target verify in a separate stream
         with self.plan_stream_ctx:
+            # prepare for verify runs in plan_stream, overlap with forward_stream
             verify_forward_batch, can_run_cuda_graph = spec_info.prepare_for_verify(
                 batch,
                 self.target_worker,
@@ -392,6 +395,7 @@ class EAGLEWorker(TpModelWorker):
 
         # Correct some buffers due to the overlap plan
         if self.plan_stream:
+            # forward_stream to wait for plan_stream to finish prepare_for_verify, but CPU non-blocking
             torch.cuda.current_stream().wait_stream(self.plan_stream)
 
             # Some values such as custom_mask and position depend on the output of draft,
@@ -406,7 +410,7 @@ class EAGLEWorker(TpModelWorker):
                 ),
             )
 
-        # Run target verify batch in the main compute stream
+        # Run target verify batch in the main compute stream, i.e. forward_stream
         forward_batch_output = self.target_worker.forward_batch_generation(
             verify_forward_batch, skip_sample=True, skip_attn_backend_init=True
         )
@@ -418,10 +422,11 @@ class EAGLEWorker(TpModelWorker):
             predict,
             accept_length,
             accept_index,
-        ) = spec_info.sample(batch, logits_output)
+        ) = spec_info.sample(batch, logits_output) # sample runs in forward_stream
         new_seq_lens = seq_lens_backup + accept_length
         verify_done = torch.cuda.Event()
-        verify_done.record()
+        verify_done.record() # record an event in forward_stream, used later by schedule_stream
+        print(f"DEBUG: EAGLEWorker.verify -- {accept_index=}, {accept_length=}, {new_seq_lens=}, {seq_lens_backup=}")
 
         # Move the accepted tokens to the target KV cache locations
         batch.seq_lens = seq_lens_backup
@@ -452,6 +457,7 @@ class EAGLEWorker(TpModelWorker):
 
         # Prepare for draft extend in a separate stream
         with self.plan_stream_ctx:
+            # prepare for draft extend in plan_stream, overlap with forward_stream
             forward_batch = draft_input.prepare_for_extend_to_fill_draft_kvcache(
                 batch,
                 predict,
@@ -460,6 +466,7 @@ class EAGLEWorker(TpModelWorker):
             )
 
         if self.plan_stream:
+            # again, forward_stream to wait for plan_stream to finish prepare_for_extend_to_fill_draft_kvcache, but CPU non-blocking
             torch.cuda.current_stream().wait_stream(self.plan_stream)
 
         # Run draft extend batch in the main compute stream

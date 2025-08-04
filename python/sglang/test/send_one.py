@@ -92,6 +92,9 @@ def send_one_prompt(args):
 
     if args.batch_size > 1:
         prompt = [prompt] * args.batch_size
+        # prompt[1] = "Human: Give me a fully functional inference engine server. Show the python code.\n\nAssistant:"
+        # prompt[2] = "Human: What is the capital of France and how is that city like.\n\nAssistant:"
+        # prompt[3] = "Human: Give me 3 trivial information about that city.\n\nAssistant:"
 
     json_data = {
         "text": prompt,
@@ -124,6 +127,7 @@ def send_one_prompt(args):
     else:
         ret = response.json()
 
+    rets = ret
     if args.batch_size > 1:
         ret = ret[0]
 
@@ -134,15 +138,27 @@ def send_one_prompt(args):
     latency = ret["meta_info"]["e2e_latency"]
 
     if "spec_verify_ct" in ret["meta_info"]:
-        acc_length = (
-            ret["meta_info"]["completion_tokens"] / ret["meta_info"]["spec_verify_ct"]
-        )
+        if ret["meta_info"]["spec_verify_ct"] == 0:
+            acc_length = 1.0
+        else:
+            acc_length = (
+                ret["meta_info"]["completion_tokens"] / ret["meta_info"]["spec_verify_ct"]
+            )
     else:
         acc_length = 1.0
 
     speed = ret["meta_info"]["completion_tokens"] / latency
 
-    print(ret["text"])
+    if args.batch_size > 1:
+        for r in rets:
+            print(r["text"])
+            print(f"completion_tokens: {r['meta_info']['completion_tokens']}")
+            print("-" * 40)
+    else:
+        print(ret["text"])
+        print(f"total tokens: {ret['meta_info']['prompt_tokens'] + ret['meta_info']['completion_tokens']}")
+        print("-" * 40)
+    # print(ret["text"])
     print()
     print(f"{acc_length=:.2f}")
     print(f"{speed=:.2f} token/s")

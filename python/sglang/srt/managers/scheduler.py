@@ -440,14 +440,18 @@ class Scheduler(
         self.kv_transfer_speed_gb_s: float = 0.0
         self.kv_transfer_latency_ms: float = 0.0
         self.sessions: Dict[str, Session] = {}
+        # three streams:
+        # 1. current_stream
         self.current_stream = torch.get_device_module(self.device).current_stream()
         if self.device == "cpu":
             self.current_stream.synchronize = lambda: None  # No-op for CPU
         self.forward_sleep_time = None
+        # 2. forward_stream
         self.forward_stream = torch.get_device_module(self.device).Stream()
         self.forward_stream_ctx = torch.get_device_module(self.device).stream(
             self.forward_stream
         )
+        # 3. copy_stream
         self.copy_stream = torch.get_device_module(self.device).Stream()
 
         # Init chunked prefill
@@ -820,20 +824,37 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_overlap(self):
         """A scheduler loop that overlaps the CPU processing and GPU computation."""
-        self.result_queue = deque()
+        # The result_queue to store batch results waiting for CPU processing
+        self.result_queue = deque() # max length is 2, for overlap
 
         while True:
+            # receive requests from clients via zmq, non-blocking, returns immediately if no requests
             recv_reqs = self.recv_requests()
+            # process input requests, adding to waiting queue
             self.process_input_requests(recv_reqs)
 
+            # selecting requests to be run for the next forward pass
+            # - kv cache allocation
+            # - preparing input tensors
+            # - returns None if no requests to run
             batch = self.get_next_batch_to_run()
             self.cur_batch = batch
 
+            # current batch is not None, process
             if batch:
+                # sync event. Triggered when the batch is successfully launched on the GPU, 
+                # allowing CPU processing to proceed safely.
                 batch.launch_done = threading.Event()
+                # launch batch on GPU asynchronously.
+                # - runs on forward_stream
+                # - returns immediately with "future" token IDs
+                # - result contains future references that will be resolved later
                 result = self.run_batch(batch)
+                # append a copy of the batch, and a result object with future references to the result_queue
                 self.result_queue.append((batch.copy(), result))
 
+                # This check is True only for the first iteration of the loop.
+                # It is used for triggering sampling_info_done event,TODO: why?
                 if self.last_batch is None:
                     # Create a dummy first batch to start the pipeline for overlap schedule.
                     # It is now used for triggering the sampling_info_done event.
@@ -842,19 +863,25 @@ class Scheduler(
                         forward_mode=ForwardMode.DUMMY_FIRST,
                         next_batch_sampling_info=self.cur_sampling_info,
                     )
-                    self.process_batch_result(tmp_batch, None, batch.launch_done)
+                    # sets next_batch_sampling_info.sampling_info_done, TODO: why?
+                    self.process_batch_result(tmp_batch, None, batch.launch_done) # this batch.launch_done is not used
 
+            # should be true after the first iteration, unless idle
             if self.last_batch:
                 # Process the results of the last batch
+                # Process the previous batch's result, get the result from the result_queue
                 tmp_batch, tmp_result = self.result_queue.popleft()
+                # if the current batch is idle, set previous batch's next batch sampling info to be None, otherwise set it to be the current batch's sampling_info
                 tmp_batch.next_batch_sampling_info = (
                     self.cur_sampling_info if batch else None
                 )
-                # NOTE: we should use current launched batch's launch_done event Instead of the last batch's
+                # NOTE: we should use current launched batch's launch_done event Instead of the last batch's, so that
+                # we process the results of previous batch after the current batch is launched
                 self.process_batch_result(
                     tmp_batch, tmp_result, batch.launch_done if batch else None
                 )
             elif batch is None:
+                # when there's no previous batch and no current batch, we do memory checks
                 # When the server is idle, do self-check and re-init some states
                 self.check_memory()
                 self.check_tree_cache()
@@ -1859,6 +1886,7 @@ class Scheduler(
             batch.batch_is_full = False
 
         # Update batch tensors
+        # print(f"DEBUG: Scheduler.update_running_batch -- before prepare_for_decode")
         batch.prepare_for_decode()
         return batch
 
@@ -1885,10 +1913,13 @@ class Scheduler(
                 )
 
                 # Run forward in a separate stream to avoid blocking the main stream.
+                # Run forward in forward_stream, and prep in schedule_stream
                 with self.forward_stream_ctx:
                     forward_output = self.forward_worker.forward_batch_generation(
                         model_worker_batch
                     )
+                    # copy_done is in forward_stream, used later for schedule_stream to sync
+                    # used to enable safe async GPU-to-CPU memory copy, ensuring 
                     copy_done = torch.cuda.Event()
                     copy_done.record()
             else:

@@ -36,7 +36,6 @@ class TestEagleBS1(CustomTestCase):
                 "6",
                 "--max-running-requests",
                 "1",
-                "--disable-overlap-schedule",
             ],
         )
 
@@ -85,7 +84,6 @@ class TestEagleLargeBS(CustomTestCase):
                 "6",
                 "--max-running-requests",
                 "8",
-                "--disable-overlap-schedule",
             ],
         )
 

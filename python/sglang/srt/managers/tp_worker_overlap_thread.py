@@ -143,25 +143,31 @@ class TpModelWorkerClient:
             logger.error(f"TpModelWorkerClient hit an exception: {traceback}")
             self.parent_process.send_signal(signal.SIGQUIT)
 
+    # for overlap, this is the thread that handles actual forward pass
     @DynamicGradMode()
     def forward_thread_func_(self):
         batch_pt = 0
-        batch_lists = [None] * 2
+        batch_lists = [None] * 2 # a circular buffer with 2 elements
 
         while True:
             model_worker_batch, future_token_ids_ct, sync_event = self.input_queue.get()
             if not model_worker_batch:
                 break
-
+            
+            # background thread runs on forward_stream. sync_event is on scheduler_stream, waiting for 
+            # the scheduler_stream to finish tensor operations on the model_worker_batch, then start
+            # the operations on the forward_stream.
             sync_event.wait()
 
             # Keep a reference of model_worker_batch by storing it into a list.
             # Otherwise, the tensor members of model_worker_batch will be released
             # by pytorch and cause CUDA illegal memory access errors.
+            # store the batch in the circular buffer
             batch_lists[batch_pt % 2] = model_worker_batch
             batch_pt += 1
 
             # Create event
+            # create CUDA event to track when async memory copies are completed later
             copy_done = torch.get_device_module(self.device).Event()
 
             # Resolve future tokens in the input
@@ -171,6 +177,7 @@ class TpModelWorkerClient:
             # update the consumer index of hicache to the running batch
             self.set_hicache_consumer(model_worker_batch.hicache_consumer_index)
             # Run forward
+            # calls the actual forward pass, synchronously
             logits_output, next_token_ids, can_run_cuda_graph = (
                 self.worker.forward_batch_generation(
                     model_worker_batch, model_worker_batch.launch_done
@@ -178,12 +185,16 @@ class TpModelWorkerClient:
             )
 
             # Update the future token ids map
+            # stores the next token ids in the future_token_ids_map, so that
+            # in the next batch, the resolve_future_token_ids function can
+            # use the stored next token ids to resolve the input_ids.
             bs = len(model_worker_batch.seq_lens)
             self.future_token_ids_map[
                 future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
             ] = next_token_ids
 
             # Copy results to the CPU
+            # async memory copies from GPU to CPU, async, queued in forward_stream
             if model_worker_batch.return_logprob:
                 logits_output.next_token_logprobs = (
                     logits_output.next_token_logprobs.to("cpu", non_blocking=True)
@@ -197,6 +208,7 @@ class TpModelWorkerClient:
                     "cpu", non_blocking=True
                 )
             next_token_ids = next_token_ids.to("cpu", non_blocking=True)
+            # record that copy from GPU to CPU is done, this is async, queued in forward_stream
             copy_done.record()
 
             self.output_queue.put(
@@ -227,9 +239,11 @@ class TpModelWorkerClient:
         next_token_ids = next_token_ids.tolist()
         return logits_output, next_token_ids, can_run_cuda_graph
 
+    # for overlap, forward comes here
     def forward_batch_generation(
         self, model_worker_batch: ModelWorkerBatch
     ) -> Tuple[None, torch.Tensor, bool]:
+        print(f"tp_worker_overlap_thread.forward_batch_generation")
         # Create a new copy of sampling_info because it will be updated in-place by the scheduler for the next batch.
         sampling_info = model_worker_batch.sampling_info
         sampling_info.update_penalties()
@@ -243,6 +257,7 @@ class TpModelWorkerClient:
         sync_event = torch.get_device_module(self.device).Event()
         sync_event.record(self.scheduler_stream)
 
+        # this makes it async, just push to an input queue and return immediately
         # Push a new batch to the queue
         self.input_queue.put((model_worker_batch, self.future_token_ids_ct, sync_event))
 

@@ -55,6 +55,8 @@ class SchedulerOutputProcessorMixin:
                 result.copy_done,
             )
 
+            # current stream is scheduler_stream, copy_done is in forward_stream, sync with the forward_stream
+            # to ensure GPU tensors are ready to be copied to CPU
             if copy_done is not None:
                 copy_done.synchronize()
 
@@ -208,6 +210,8 @@ class SchedulerOutputProcessorMixin:
         )
         self.num_generated_tokens += len(batch.reqs)
 
+        # copy_done is in forward_stream, sync with the forward_stream
+        # to ensure GPU tensors are ready to be copied to CPU
         if copy_done is not None:
             ctx = torch.cuda.stream(self.copy_stream)
             copy_done.synchronize()
@@ -215,6 +219,8 @@ class SchedulerOutputProcessorMixin:
             ctx = empty_context()
 
         with ctx:
+            # copy_stream
+            # tolist() calls copy from GPU to CPU, thus CPU blocking
             next_token_ids = next_token_ids.tolist()
             if batch.return_logprob:
                 next_token_logprobs = logits_output.next_token_logprobs.tolist()
@@ -236,6 +242,8 @@ class SchedulerOutputProcessorMixin:
                 self.spec_num_total_accepted_tokens += sum(accept_length_cpu)
                 self.spec_num_total_forward_ct += len(batch.reqs)
 
+        print(f"----DEBUG----: process_batch_result_decode: {self.spec_num_total_forward_ct=}, {batch=}, {result.spec_info=}")
+
         self.token_to_kv_pool_allocator.free_group_begin()
 
         # Check finish condition
@@ -252,7 +260,12 @@ class SchedulerOutputProcessorMixin:
                         self.token_to_kv_pool_allocator.free(batch.out_cache_loc[i : i + 1])
                     else:
                         # TODO: how to free for overlap spec dec?
-                        pass
+                        allocate_len = result.spec_info.allocate_lens[i]
+                        start_len = allocate_len - self.draft_worker.num_draft_tokens
+                        indices_to_free = self.req_to_token_pool.req_to_token[req.req_pool_idx][start_len:allocate_len]
+                        print(f"----DEBUG----: free for overlap spec dec 1: {start_len=}, {allocate_len=}, {req.req_pool_idx=}, {allocate_len-start_len=}, {indices_to_free=}, {req=}")
+                        self.token_to_kv_pool_allocator.free(indices_to_free)
+                        
                 else:
                     # Only free when the extra token is in a new page
                     if (
@@ -271,14 +284,21 @@ class SchedulerOutputProcessorMixin:
 
             req.check_finished()
             if req.finished():
-                if batch.spec_algorithm.is_eagle():
+                if not self.enable_overlap and batch.spec_algorithm.is_eagle():
                     # TODO: is there a better way to get the indices to free?
                     req_pool_index = batch.req_pool_indices[i]
-                    start_len = batch.spec_info.new_seq_lens[i]
+                    prev_start_len = batch.spec_info.new_seq_lens[i]
                     allocate_len = batch.spec_info.allocate_lens[i]
-                    indices_to_free = self.req_to_token_pool.req_to_token[req_pool_index][start_len:allocate_len]
+                    indices_to_free = self.req_to_token_pool.req_to_token[req_pool_index][prev_start_len:allocate_len]
                     self.token_to_kv_pool_allocator.free(indices_to_free)
+                elif self.enable_overlap and batch.spec_algorithm.is_eagle():
+                    # TODO: how to free for overlap spec dec?
+                    allocate_len = result.spec_info.allocate_lens[i]
+                    start_len = allocate_len - self.draft_worker.num_draft_tokens
+                    print(f"----DEBUG----: free for overlap spec dec 2: {start_len=}, {allocate_len=}, {req.req_pool_idx=}, {allocate_len-start_len=}, {req=}")
+                    pass
                 self.tree_cache.cache_finished_req(req)
+                print(f"----DEBUG----: cache finished req: {req.rid=}, {req.origin_input_ids=}, {req.output_ids=}")
                 req.time_stats.completion_time = time.time()
 
             if req.return_logprob and batch.spec_algorithm.is_none():

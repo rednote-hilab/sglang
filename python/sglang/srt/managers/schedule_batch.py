@@ -964,6 +964,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             if self.tree_cache is not None:
                 self.tree_cache.pretty_print()
             raise RuntimeError(error_msg)
+        print(f"DEBUG: alloc_token_slots: {out_cache_loc=}")
 
         if backup_state:
             return out_cache_loc, state
@@ -1055,6 +1056,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             (new_allocate_lens - self.spec_info.allocate_lens).sum().item()
         )
         out_cache_loc = self.alloc_token_slots(num_needed_tokens)
+        print(f"DEBUG: ScheduleBatch.allocate_for_eagle -- {out_cache_loc=}")
 
         assign_req_to_token_pool[(bs,)](
             self.req_pool_indices,
@@ -1066,6 +1068,8 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             next_power_of_2(bs),
         )
         self.spec_info.allocate_lens = new_allocate_lens
+        debug_req_to_token = self.req_to_token_pool.req_to_token[self.req_pool_indices][:,:new_allocate_lens[0].item()]
+        print(f"DEBUG: ScheduleBatch.allocate_for_eagle -- {bs=}, {self.seq_lens=}, {new_needed_lens=}, {new_allocate_lens=}, {num_needed_tokens=}, {out_cache_loc=}, {self.spec_info.allocate_lens=}, {self.req_pool_indices=}, {debug_req_to_token.shape=}, {debug_req_to_token=}")
 
     def prepare_encoder_info_extend(self, input_ids: List[int], seq_lens: List[int]):
         self.encoder_lens_cpu = []
@@ -1267,6 +1271,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         # Allocate memory
         if self.token_to_kv_pool_allocator.page_size == 1:
             out_cache_loc = self.alloc_token_slots(extend_num_tokens)
+            print(f"DEBUG: ScheduleBatch.prepare_for_extend -- {out_cache_loc=}")
         else:
             last_loc = get_last_loc(
                 self.req_to_token_pool.req_to_token,
@@ -1596,6 +1601,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         # Allocate memory
         if self.token_to_kv_pool_allocator.page_size == 1:
             self.out_cache_loc = self.alloc_token_slots(bs)
+            print(f"DEBUG: ScheduleBatch.prepare_for_decode -- {self.out_cache_loc=}")
         else:
             last_loc = self.req_to_token_pool.req_to_token[
                 self.req_pool_indices, self.seq_lens - 2
